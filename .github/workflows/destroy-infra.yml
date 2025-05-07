@@ -1,0 +1,35 @@
+name: Destroy Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      resourceGroupName:
+        description: 'Name of the Resource Group'
+        required: true
+        default: 'rg-github-runners'
+      confirmDestroy:
+        description: 'Type "DESTROY" to confirm'
+        required: true
+
+jobs:
+  destroy-infrastructure:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.confirmDestroy == 'DESTROY'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Delete Resource Group
+        run: |
+          echo "WARNING: Deleting resource group ${{ github.event.inputs.resourceGroupName }} and all resources"
+          az group delete --name ${{ github.event.inputs.resourceGroupName }} --yes --no-wait
+          
+      - name: Verification
+        run: |
+          echo "Resource group deletion initiated. This process runs asynchronously."
+          echo "To check status, run: az group show --name ${{ github.event.inputs.resourceGroupName }}"

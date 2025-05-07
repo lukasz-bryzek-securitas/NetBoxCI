@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: github-runner
+  namespace: github-runners
+  labels:
+    app: github-runner
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: github-runner
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: github-runner
+    spec:
+      containers:
+      - name: github-runner
+        image: ghcr.io/actions/actions-runner:latest
+        env:
+        - name: RUNNER_NAME_PREFIX
+          value: "runner"
+        - name: RUNNER_LABELS
+          value: "linux,azure,k8s"
+        - name: RUNNER_REPO
+          valueFrom:
+            secretKeyRef:
+              name: github-runner-config
+              key: repo
+        - name: RUNNER_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: github-runner-config
+              key: token
+        - name: RUNNER_WORK_DIRECTORY
+          value: "_work"
+        command:
+        - "/bin/bash"
+        - "-c"
+        - |
+          RUNNER_NAME="${RUNNER_NAME_PREFIX}-$(hostname)"
+          ./config.sh --url https://github.com/${RUNNER_REPO} --token ${RUNNER_TOKEN} --name ${RUNNER_NAME} --labels ${RUNNER_LABELS} --work _work --unattended --ephemeral
+          ./run.sh
+        volumeMounts:
+        - name: docker-sock
+          mountPath: /var/run/docker.sock
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+      volumes:
+      - name: docker-sock
+        hostPath:
+          path: /var/run/docker.sock
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: github-runner-config
+  namespace: github-runners
+type: Opaque
+data:
+  repo: IyBSZXBsYWNlIHdpdGggYmFzZTY0IGVuY29kZWQgcmVwbyBuYW1lIChlLmcuIG93bmVyL3JlcG8pCg==  # Replace with base64 encoded repo name (e.g. owner/repo)
+  token: IyBSZXBsYWNlIHdpdGggYmFzZTY0IGVuY29kZWQgdG9rZW4K  # Replace with base64 encoded token

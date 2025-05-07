@@ -1,0 +1,49 @@
+name: Delete GitHub Runner
+
+on:
+  workflow_dispatch:
+    inputs:
+      resourceGroupName:
+        description: 'Name of the Resource Group'
+        required: true
+        default: 'rg-github-runners'
+      clusterName:
+        description: 'AKS Cluster Name'
+        required: true
+        default: 'aks-github-runners'
+      runnerName:
+        description: 'Runner Name to Delete'
+        required: true
+
+jobs:
+  delete-runner:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Get AKS Credentials
+        run: |
+          az aks get-credentials \
+            --resource-group ${{ github.event.inputs.resourceGroupName }} \
+            --name ${{ github.event.inputs.clusterName }} \
+            --admin
+
+      - name: Delete GitHub Runner
+        run: |
+          kubectl delete pod ${{ github.event.inputs.runnerName }} -n github-runners
+          
+      - name: Verify Runner Deletion
+        run: |
+          echo "Verifying runner deletion..."
+          if kubectl get pod ${{ github.event.inputs.runnerName }} -n github-runners 2>/dev/null; then
+            echo "Error: Runner ${{ github.event.inputs.runnerName }} still exists"
+            exit 1
+          else
+            echo "Runner ${{ github.event.inputs.runnerName }} successfully deleted"
+          fi

@@ -1,0 +1,103 @@
+name: Update Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      resourceGroupName:
+        description: 'Name of the Resource Group'
+        required: true
+        default: 'rg-github-runners'
+      clusterName:
+        description: 'AKS Cluster Name'
+        required: true
+        default: 'aks-github-runners'
+      kubernetesVersion:
+        description: 'New Kubernetes Version'
+        required: false
+      nodeCount:
+        description: 'New Node Count'
+        required: false
+      nodeSize:
+        description: 'New VM Size for Nodes'
+        required: false
+
+jobs:
+  update-infrastructure:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Get Current Cluster Configuration
+        id: get_config
+        run: |
+          az aks show --resource-group ${{ github.event.inputs.resourceGroupName }} --name ${{ github.event.inputs.clusterName }} > cluster.json
+          CURRENT_K8S_VERSION=$(cat cluster.json | jq -r .kubernetesVersion)
+          CURRENT_NODE_COUNT=$(cat cluster.json | jq -r .agentPoolProfiles[0].count)
+          CURRENT_NODE_SIZE=$(cat cluster.json | jq -r .agentPoolProfiles[0].vmSize)
+          
+          echo "CURRENT_K8S_VERSION=$CURRENT_K8S_VERSION" >> $GITHUB_OUTPUT
+          echo "CURRENT_NODE_COUNT=$CURRENT_NODE_COUNT" >> $GITHUB_OUTPUT
+          echo "CURRENT_NODE_SIZE=$CURRENT_NODE_SIZE" >> $GITHUB_OUTPUT
+
+      - name: Update Kubernetes Version
+        if: github.event.inputs.kubernetesVersion != ''
+        run: |
+          echo "Updating Kubernetes version from ${{ steps.get_config.outputs.CURRENT_K8S_VERSION }} to ${{ github.event.inputs.kubernetesVersion }}"
+          az aks upgrade \
+            --resource-group ${{ github.event.inputs.resourceGroupName }} \
+            --name ${{ github.event.inputs.clusterName }} \
+            --kubernetes-version ${{ github.event.inputs.kubernetesVersion }}
+
+      - name: Update Node Count
+        if: github.event.inputs.nodeCount != ''
+        run: |
+          echo "Updating node count from ${{ steps.get_config.outputs.CURRENT_NODE_COUNT }} to ${{ github.event.inputs.nodeCount }}"
+          az aks scale \
+            --resource-group ${{ github.event.inputs.resourceGroupName }} \
+            --name ${{ github.event.inputs.clusterName }} \
+            --node-count ${{ github.event.inputs.nodeCount }}
+
+      - name: Update Node Size
+        if: github.event.inputs.nodeSize != ''
+        run: |
+          echo "Updating node size from ${{ steps.get_config.outputs.CURRENT_NODE_SIZE }} to ${{ github.event.inputs.nodeSize }}"
+          # Note: Updating node size often requires recreating the node pool
+          # This is a simplified example - in practice you'd need a more complex node pool update process
+          bash ./scripts/update-node-size.sh \
+            ${{ github.event.inputs.resourceGroupName }} \
+            ${{ github.event.inputs.clusterName }} \
+            ${{ github.event.inputs.nodeSize }}
+
+      - name: Get Updated AKS Credentials
+        run: |
+          az aks get-credentials \
+            --resource-group ${{ github.event.inputs.resourceGroupName }} \
+            --name ${{ github.event.inputs.clusterName }} \
+            --admin --overwrite-existing
+
+      - name: Verify Cluster Status
+        run: |
+          kubectl get nodes
+          echo "Cluster status:"
+          kubectl get nodes -o custom-columns=NAME:.metadata.name,STATUS:.status.conditions[?(@.type=='Ready')].status,VERSION:.status.nodeInfo.kubeletVersion
+          
+      - name: Summary
+        run: |
+          echo "Infrastructure updated successfully:"
+          echo "Resource Group: ${{ github.event.inputs.resourceGroupName }}"
+          echo "AKS Cluster: ${{ github.event.inputs.clusterName }}"
+          if [[ "${{ github.event.inputs.kubernetesVersion }}" != "" ]]; then
+            echo "Kubernetes Version: ${{ steps.get_config.outputs.CURRENT_K8S_VERSION }} -> ${{ github.event.inputs.kubernetesVersion }}"
+          fi
+          if [[ "${{ github.event.inputs.nodeCount }}" != "" ]]; then
+            echo "Node Count: ${{ steps.get_config.outputs.CURRENT_NODE_COUNT }} -> ${{ github.event.inputs.nodeCount }}"
+          fi
+          if [[ "${{ github.event.inputs.nodeSize }}" != "" ]]; then
+            echo "Node Size: ${{ steps.get_config.outputs.CURRENT_NODE_SIZE }} -> ${{ github.event.inputs.nodeSize }}"
+          fi

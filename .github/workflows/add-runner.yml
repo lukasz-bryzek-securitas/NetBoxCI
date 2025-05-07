@@ -1,0 +1,77 @@
+name: Add GitHub Runner
+
+on:
+  workflow_dispatch:
+    inputs:
+      resourceGroupName:
+        description: 'Name of the Resource Group'
+        required: true
+        default: 'rg-github-runners'
+      clusterName:
+        description: 'AKS Cluster Name'
+        required: true
+        default: 'aks-github-runners'
+      runnerName:
+        description: 'Runner Name Prefix'
+        required: true
+        default: 'github-runner'
+      runnerCount:
+        description: 'Number of Runners to Deploy'
+        required: true
+        default: '1'
+      runnerLabels:
+        description: 'Runner Labels (comma-separated)'
+        required: true
+        default: 'linux,azure,k8s'
+
+jobs:
+  deploy-runner:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Get AKS Credentials
+        run: |
+          az aks get-credentials \
+            --resource-group ${{ github.event.inputs.resourceGroupName }} \
+            --name ${{ github.event.inputs.clusterName }} \
+            --admin
+
+      - name: Generate GitHub Runner Token
+        id: get_token
+        run: |
+          TOKEN=$(curl -s -X POST \
+            -H "Accept: application/vnd.github.v3+json" \
+            -H "Authorization: token ${{ secrets.GH_PERSONAL_TOKEN }}" \
+            https://api.github.com/repos/${{ github.repository }}/actions/runners/registration-token | jq -r .token)
+          echo "RUNNER_TOKEN=$TOKEN" >> $GITHUB_OUTPUT
+
+      - name: Deploy GitHub Runners
+        run: |
+          bash ./scripts/deploy-runners.sh \
+            ${{ github.event.inputs.runnerName }} \
+            ${{ github.event.inputs.runnerCount }} \
+            ${{ github.event.inputs.runnerLabels }} \
+            ${{ steps.get_token.outputs.RUNNER_TOKEN }} \
+            ${{ github.repository }}
+        
+      - name: Verify Runner Deployment
+        run: |
+          kubectl get pods -n github-runners
+          echo "Waiting for runners to become ready..."
+          kubectl wait --for=condition=Ready pods --selector=app=github-runner -n github-runners --timeout=300s
+          
+      - name: Summary
+        run: |
+          echo "GitHub Runners deployed successfully:"
+          echo "Resource Group: ${{ github.event.inputs.resourceGroupName }}"
+          echo "AKS Cluster: ${{ github.event.inputs.clusterName }}"
+          echo "Runner Name Prefix: ${{ github.event.inputs.runnerName }}"
+          echo "Runner Count: ${{ github.event.inputs.runnerCount }}"
+          echo "Runner Labels: ${{ github.event.inputs.runnerLabels }}"
