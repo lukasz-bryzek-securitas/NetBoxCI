@@ -34,7 +34,7 @@ az aks create \
     --generate-ssh-keys \
     --network-plugin kubenet \
     --network-policy calico \
-    --tags "purpose=github-runners" "environment=ci" \
+    --tags "purpose=github-runners" "environment=ci" "global.finops.company-code=110" "global.finops.cost-center=2023" "global.finops.cost-owner=Bartosz.Sajkowski@securitas.com" "global.finops.country=Global" "global.finops.project-code=90" "global.finops.project-name=Non-Project" "global.operation.environment=sandbox" "global.operation.governance=GITS‑E" "global.operation.managed-by=Jakub.Wdowiarek@securitas.com" "global.tagging-version=1.0" \
     --yes
 
 # Check if cluster creation was successful
