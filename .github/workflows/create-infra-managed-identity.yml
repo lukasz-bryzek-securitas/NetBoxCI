@@ -101,13 +101,23 @@ jobs:
         id: k8s-version
         run: |
           echo "🔍 Getting latest available Kubernetes version for ${{ github.event.inputs.location }}..."
-          LATEST_VERSION=$(az aks get-versions --location ${{ github.event.inputs.location }} --query 'orchestrators[?!isPreview].orchestratorVersion' --output tsv | sort -V | tail -n 1)
-          echo "Available K8s version: $LATEST_VERSION"
+          
+          # Try to get latest version with KubernetesOfficial support
+          LATEST_VERSION=$(az aks get-versions --location ${{ github.event.inputs.location }} --output json | jq -r '.kubernetesVersions[] | select(.isPreview != true) | select(.supportPlan | contains("KubernetesOfficial")) | .version' | sort -V | tail -n 1)
+          
+          # Fallback to known stable version if query fails
+          if [ -z "$LATEST_VERSION" ] || [ "$LATEST_VERSION" = "null" ]; then
+            LATEST_VERSION="1.32.4"
+            echo "Using fallback K8s version: $LATEST_VERSION"
+          else
+            echo "Latest K8s version found: $LATEST_VERSION"
+          fi
+          
           echo "K8S_VERSION=$LATEST_VERSION" >> $GITHUB_OUTPUT
           
-          # Show all available versions for reference
-          echo "All available versions:"
-          az aks get-versions --location ${{ github.event.inputs.location }} --query 'orchestrators[?!isPreview].orchestratorVersion' --output tsv | sort -V
+          # Show available versions for debugging
+          echo "Available versions (first 5):"
+          az aks get-versions --location ${{ github.event.inputs.location }} --query 'kubernetesVersions[0:5].{Version:version, Preview:isPreview, Support:supportPlan}' --output table || echo "Failed to get version details"
 
       - name: Create AKS Cluster
         run: |
