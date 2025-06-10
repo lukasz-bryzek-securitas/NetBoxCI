@@ -18,7 +18,7 @@ on:
       kubernetesVersion:
         description: 'Kubernetes Version'
         required: true
-        default: '1.28.9'
+        default: '1.32.4'
       nodeCount:
         description: 'Node Count'
         required: true
@@ -102,8 +102,8 @@ jobs:
         run: |
           echo "🔍 Getting latest available Kubernetes version for ${{ github.event.inputs.location }}..."
           
-          # Try to get latest version with KubernetesOfficial support
-          LATEST_VERSION=$(az aks get-versions --location ${{ github.event.inputs.location }} --output json | jq -r '.kubernetesVersions[] | select(.isPreview != true) | select(.supportPlan | contains("KubernetesOfficial")) | .version' | sort -V | tail -n 1)
+          # Get latest stable (non-preview) version using TSV output
+          LATEST_VERSION=$(az aks get-versions --location ${{ github.event.inputs.location }} --query "[?isPreview != \`true\`].kubernetesVersion" --output tsv | sort -V | tail -n 1)
           
           # Fallback to known stable version if query fails
           if [ -z "$LATEST_VERSION" ] || [ "$LATEST_VERSION" = "null" ]; then
@@ -115,9 +115,9 @@ jobs:
           
           echo "K8S_VERSION=$LATEST_VERSION" >> $GITHUB_OUTPUT
           
-          # Show available versions for debugging
+          # Show first few available versions for debugging
           echo "Available versions (first 5):"
-          az aks get-versions --location ${{ github.event.inputs.location }} --query 'kubernetesVersions[0:5].{Version:version, Preview:isPreview, Support:supportPlan}' --output table || echo "Failed to get version details"
+          az aks get-versions --location ${{ github.event.inputs.location }} --query "[0:5].kubernetesVersion" --output tsv || echo "Using input version: ${{ github.event.inputs.kubernetesVersion }}"
 
       - name: Create AKS Cluster
         run: |
