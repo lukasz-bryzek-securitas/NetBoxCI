@@ -10,7 +10,7 @@ on:
       location:
         description: 'Azure Region'
         required: true
-        default: 'westeurope'
+        default: 'northeurope'
       clusterName:
         description: 'AKS Cluster Name'
         required: true
@@ -18,7 +18,7 @@ on:
       kubernetesVersion:
         description: 'Kubernetes Version'
         required: true
-        default: '1.28.9'
+        default: '1.29.9'
       nodeCount:
         description: 'Node Count'
         required: true
@@ -26,7 +26,7 @@ on:
       nodeSize:
         description: 'VM Size for Nodes'
         required: true
-        default: 'Standard_D2s_v3'
+        default: 'Standard_B2ms'
 
 permissions:
   id-token: write
