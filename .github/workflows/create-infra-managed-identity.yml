@@ -18,7 +18,7 @@ on:
       kubernetesVersion:
         description: 'Kubernetes Version'
         required: true
-        default: '1.29.9'
+        default: '1.28.9'
       nodeCount:
         description: 'Node Count'
         required: true
@@ -97,13 +97,25 @@ jobs:
             exit 1
           fi
 
+      - name: Get Latest Kubernetes Version
+        id: k8s-version
+        run: |
+          echo "🔍 Getting latest available Kubernetes version for ${{ github.event.inputs.location }}..."
+          LATEST_VERSION=$(az aks get-versions --location ${{ github.event.inputs.location }} --query 'orchestrators[?!isPreview].orchestratorVersion' --output tsv | sort -V | tail -n 1)
+          echo "Available K8s version: $LATEST_VERSION"
+          echo "K8S_VERSION=$LATEST_VERSION" >> $GITHUB_OUTPUT
+          
+          # Show all available versions for reference
+          echo "All available versions:"
+          az aks get-versions --location ${{ github.event.inputs.location }} --query 'orchestrators[?!isPreview].orchestratorVersion' --output tsv | sort -V
+
       - name: Create AKS Cluster
         run: |
           bash ./scripts/create-aks.sh \
             ${{ github.event.inputs.resourceGroupName }} \
             ${{ github.event.inputs.clusterName }} \
             ${{ github.event.inputs.location }} \
-            ${{ github.event.inputs.kubernetesVersion }} \
+            ${{ steps.k8s-version.outputs.K8S_VERSION }} \
             ${{ github.event.inputs.nodeCount }} \
             ${{ github.event.inputs.nodeSize }}
 
@@ -131,6 +143,6 @@ jobs:
           echo "Resource Group: ${{ github.event.inputs.resourceGroupName }}"
           echo "AKS Cluster: ${{ github.event.inputs.clusterName }}"
           echo "Location: ${{ github.event.inputs.location }}"
-          echo "Kubernetes Version: ${{ github.event.inputs.kubernetesVersion }}"
+          echo "Kubernetes Version: ${{ steps.k8s-version.outputs.K8S_VERSION }} (auto-selected)"
           echo "Node Count: ${{ github.event.inputs.nodeCount }}"
           echo "Node Size: ${{ github.event.inputs.nodeSize }}"
