@@ -48,9 +48,26 @@ jobs:
 
       - name: Create Resource Group
         run: |
-          az group create \
-            --name ${{ github.event.inputs.resourceGroupName }} \
-            --location ${{ github.event.inputs.location }}
+          # Check if resource group exists
+          if az group exists --name ${{ github.event.inputs.resourceGroupName }}; then
+            echo "Resource group ${{ github.event.inputs.resourceGroupName }} already exists"
+          else
+            echo "Creating resource group ${{ github.event.inputs.resourceGroupName }} with mandatory tags"
+            az group create \
+              --name ${{ github.event.inputs.resourceGroupName }} \
+              --location ${{ github.event.inputs.location }} \
+              --tags \
+                "global.finops.company-code"="110" \
+                "global.finops.cost-center"="2023" \
+                "global.finops.cost-owner"="Bartosz.Sajkowski@securitas.com" \
+                "global.finops.country"="Global" \
+                "global.finops.project-code"="90" \
+                "global.finops.project-name"="Non-Project" \
+                "global.operation.environment"="sandbox" \
+                "global.operation.governance"="GITS‑E" \
+                "global.operation.managed-by"="Jakub.Wdowiarek@securitas.com" \
+                "global.tagging-version"="1.0"
+          fi
 
       - name: Create AKS Cluster
         run: |
