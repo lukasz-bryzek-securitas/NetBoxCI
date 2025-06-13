@@ -1,0 +1,181 @@
+name: Verify Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      resourceGroupName:
+        description: 'Name of the Resource Group'
+        required: true
+        default: 'NetBoxCI'
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  verify-infrastructure:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Check Resource Group Status
+        id: check-rg
+        run: |
+          echo "🔍 Checking status of resource group: ${{ github.event.inputs.resourceGroupName }}"
+          echo ""
+          
+          # Check if resource group exists using explicit comparison
+          RG_EXISTS_RESULT=$(az group exists --name ${{ github.event.inputs.resourceGroupName }})
+          echo "DEBUG: az group exists returned: $RG_EXISTS_RESULT"
+          
+          if [ "$RG_EXISTS_RESULT" = "true" ]; then
+            echo "✅ Resource group ${{ github.event.inputs.resourceGroupName }} EXISTS"
+            echo "rg_exists=true" >> $GITHUB_OUTPUT
+            
+            # Get detailed information about the resource group
+            echo ""
+            echo "📊 RESOURCE GROUP DETAILS:"
+            echo "=========================="
+            if RG_INFO=$(az group show --name ${{ github.event.inputs.resourceGroupName }} 2>&1); then
+              echo "$RG_INFO"
+              
+              # Extract provisioning state
+              PROVISIONING_STATE=$(az group show --name ${{ github.event.inputs.resourceGroupName }} --query "properties.provisioningState" --output tsv)
+              echo ""
+              echo "🔄 PROVISIONING STATE: $PROVISIONING_STATE"
+              echo "provisioning_state=$PROVISIONING_STATE" >> $GITHUB_OUTPUT
+              
+              # Check if it's in a transitional state
+              case "$PROVISIONING_STATE" in
+                "Succeeded")
+                  echo "✅ Resource group is in HEALTHY state"
+                  ;;
+                "Deleting")
+                  echo "🗑️ Resource group is currently being DELETED"
+                  echo "⏱️ This process typically takes 2-10 minutes"
+                  ;;
+                "Creating")
+                  echo "🔨 Resource group is currently being CREATED"
+                  ;;
+                "Failed")
+                  echo "❌ Resource group is in FAILED state"
+                  ;;
+                *)
+                  echo "⚠️ Resource group is in transitional state: $PROVISIONING_STATE"
+                  ;;
+              esac
+            else
+              echo "⚠️ Error getting resource group details: $RG_INFO"
+              echo "provisioning_state=Error" >> $GITHUB_OUTPUT
+            fi
+            
+          else
+            echo "❌ Resource group ${{ github.event.inputs.resourceGroupName }} DOES NOT EXIST"
+            echo "rg_exists=false" >> $GITHUB_OUTPUT
+            echo "provisioning_state=NotFound" >> $GITHUB_OUTPUT
+          fi
+
+      - name: List Resources in Group
+        if: steps.check-rg.outputs.rg_exists == 'true' && steps.check-rg.outputs.provisioning_state != 'Deleting'
+        run: |
+          echo ""
+          echo "📋 RESOURCES IN GROUP:"
+          echo "====================="
+          
+          RESOURCE_COUNT=$(az resource list --resource-group ${{ github.event.inputs.resourceGroupName }} --query "length(@)" --output tsv)
+          
+          if [ "$RESOURCE_COUNT" -eq 0 ]; then
+            echo "ℹ️ No resources found in the resource group"
+          else
+            echo "📊 Found $RESOURCE_COUNT resource(s):"
+            echo ""
+            az resource list --resource-group ${{ github.event.inputs.resourceGroupName }} --output table
+            
+            # Check for AKS cluster specifically
+            AKS_CLUSTERS=$(az aks list --resource-group ${{ github.event.inputs.resourceGroupName }} --query "[].name" --output tsv)
+            if [ -n "$AKS_CLUSTERS" ]; then
+              echo ""
+              echo "🚢 AKS CLUSTER STATUS:"
+              echo "====================="
+              for cluster in $AKS_CLUSTERS; do
+                echo "📍 Cluster: $cluster"
+                az aks show --resource-group ${{ github.event.inputs.resourceGroupName }} --name $cluster --query "{Name:name, Status:provisioningState, KubernetesVersion:kubernetesVersion, NodePools:agentPoolProfiles[].{Name:name, Count:count, VmSize:vmSize, Status:provisioningState}}" --output table
+              done
+            fi
+          fi
+
+      - name: Show Deleting Resources
+        if: steps.check-rg.outputs.rg_exists == 'true' && steps.check-rg.outputs.provisioning_state == 'Deleting'
+        run: |
+          echo ""
+          echo "🗑️ DELETION IN PROGRESS:"
+          echo "========================"
+          echo "The resource group is currently being deleted."
+          echo "This is an asynchronous operation that may take several minutes."
+          echo ""
+          echo "⏱️ Deletion started and is ongoing..."
+          echo "🔄 Current status: Deleting"
+          echo ""
+          echo "💡 To monitor deletion progress:"
+          echo "   - Wait 2-5 minutes for small resource groups"
+          echo "   - Wait 5-10 minutes for large resource groups with AKS"
+          echo "   - Check again with this workflow"
+          echo ""
+          echo "✅ When deletion completes, the resource group will no longer exist"
+
+      - name: Resource Group Not Found
+        if: steps.check-rg.outputs.rg_exists == 'false'
+        run: |
+          echo ""
+          echo "📭 RESOURCE GROUP NOT FOUND:"
+          echo "============================"
+          echo "Resource group '${{ github.event.inputs.resourceGroupName }}' does not exist."
+          echo ""
+          echo "💡 This could mean:"
+          echo "   ✅ The resource group was successfully deleted"
+          echo "   ⚠️ The resource group name is incorrect"
+          echo "   ⚠️ You don't have permissions to view this resource group"
+          echo "   ⚠️ The resource group was never created"
+          echo ""
+          echo "🔧 To create new infrastructure:"
+          echo "   Run the 'Create Infrastructure (Managed Identity)' workflow"
+
+      - name: Summary
+        run: |
+          echo ""
+          echo "🎯 INFRASTRUCTURE VERIFICATION SUMMARY:"
+          echo "======================================"
+          echo "Resource Group: ${{ github.event.inputs.resourceGroupName }}"
+          echo "Exists: ${{ steps.check-rg.outputs.rg_exists }}"
+          echo "Status: ${{ steps.check-rg.outputs.provisioning_state }}"
+          echo "Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo ""
+          
+          case "${{ steps.check-rg.outputs.provisioning_state }}" in
+            "Succeeded")
+              echo "🟢 RESULT: Infrastructure is HEALTHY and READY"
+              ;;
+            "Deleting")
+              echo "🟡 RESULT: Infrastructure is being DELETED"
+              ;;
+            "Creating")
+              echo "🟡 RESULT: Infrastructure is being CREATED"
+              ;;
+            "Failed")
+              echo "🔴 RESULT: Infrastructure is in FAILED state"
+              ;;
+            "NotFound")
+              echo "⚫ RESULT: Infrastructure DOES NOT EXIST"
+              ;;
+            *)
+              echo "🟠 RESULT: Infrastructure is in transitional state"
+              ;;
+          esac

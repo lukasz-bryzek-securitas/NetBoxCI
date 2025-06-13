@@ -34,20 +34,24 @@ jobs:
         id: verify-rg
         run: |
           echo "🔍 Checking if resource group ${{ github.event.inputs.resourceGroupName }} exists..."
+          
           if az group exists --name ${{ github.event.inputs.resourceGroupName }}; then
             echo "✅ Resource group ${{ github.event.inputs.resourceGroupName }} found"
-            echo "RG_EXISTS=true" >> $GITHUB_OUTPUT
+            echo "rg_exists=true" >> $GITHUB_OUTPUT
             
             # List resources in the group
             echo "📋 Resources in the group:"
             az resource list --resource-group ${{ github.event.inputs.resourceGroupName }} --output table
           else
             echo "❌ Resource group ${{ github.event.inputs.resourceGroupName }} does not exist"
-            echo "RG_EXISTS=false" >> $GITHUB_OUTPUT
+            echo "rg_exists=false" >> $GITHUB_OUTPUT
           fi
+          
+          # Debug output
+          echo "DEBUG: Output variable set to: $(grep rg_exists $GITHUB_OUTPUT || echo 'not found')"
 
       - name: Delete Resource Group
-        if: steps.verify-rg.outputs.RG_EXISTS == 'true'
+        if: steps.verify-rg.outputs.rg_exists == 'true'
         run: |
           echo "🚨 WARNING: Deleting resource group ${{ github.event.inputs.resourceGroupName }} and ALL resources within it!"
           echo "This action cannot be undone."
@@ -57,12 +61,31 @@ jobs:
           echo ""
           
           echo "🗑️ Initiating resource group deletion..."
-          az group delete --name ${{ github.event.inputs.resourceGroupName }} --yes --no-wait
           
-          echo "✅ Resource group deletion initiated successfully"
+          # Execute deletion and capture output
+          if DELETION_OUTPUT=$(az group delete --name ${{ github.event.inputs.resourceGroupName }} --yes --no-wait 2>&1); then
+            echo "✅ Resource group deletion command executed successfully!"
+            echo "📊 Azure Response: $DELETION_OUTPUT"
+            echo ""
+            echo "🔄 Deletion Status: IN PROGRESS"
+            echo "📍 Resource Group: ${{ github.event.inputs.resourceGroupName }}"
+            echo "⏱️ Started: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+            echo ""
+            echo "💡 The deletion is running asynchronously in Azure."
+            echo "   Use the verification steps below to monitor progress."
+          else
+            echo "❌ Error executing resource group deletion!"
+            echo "🔍 Error Details: $DELETION_OUTPUT"
+            echo ""
+            echo "🛠️ Possible causes:"
+            echo "   - Resource group is already being deleted"
+            echo "   - Insufficient permissions"
+            echo "   - Resources are locked or have dependencies"
+            exit 1
+          fi
 
       - name: Skip Deletion - Resource Group Not Found
-        if: steps.verify-rg.outputs.RG_EXISTS == 'false'
+        if: steps.verify-rg.outputs.rg_exists != 'true'
         run: |
           echo "ℹ️ No action taken - resource group ${{ github.event.inputs.resourceGroupName }} does not exist"
           echo "This might mean:"
@@ -71,6 +94,7 @@ jobs:
           echo "  - You don't have permissions to view this resource group"
           
       - name: Verification Instructions
+        if: steps.verify-rg.outputs.rg_exists == 'true'
         run: |
           echo "📊 VERIFICATION STEPS:"
           echo ""
@@ -95,10 +119,13 @@ jobs:
           echo "================================="
           echo "Resource Group: ${{ github.event.inputs.resourceGroupName }}"
           echo "Confirmation: ${{ github.event.inputs.confirmDestroy }}"
-          echo "Status: ${{ steps.verify-rg.outputs.RG_EXISTS == 'true' && 'Deletion initiated' || 'No action taken (RG not found)' }}"
+          echo "RG Found: ${{ steps.verify-rg.outputs.rg_exists }}"
+          echo "Status: ${{ steps.verify-rg.outputs.rg_exists == 'true' && 'Deletion initiated' || 'No action taken (RG not found)' }}"
           echo "Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
           echo ""
-          if [ "${{ steps.verify-rg.outputs.RG_EXISTS }}" == "true" ]; then
+          if [ "${{ steps.verify-rg.outputs.rg_exists }}" == "true" ]; then
             echo "⚠️ IMPORTANT: This action cannot be undone!"
             echo "All resources in the resource group are being permanently deleted."
+          else
+            echo "ℹ️ No resources were deleted."
           fi
