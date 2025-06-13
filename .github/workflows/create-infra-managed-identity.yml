@@ -6,15 +6,15 @@ on:
       resourceGroupName:
         description: 'Name of the Resource Group'
         required: true
-        default: 'NetBoxCI'
+        default: 'SCC-SB-CORP-GIT-NETBOX'
       location:
         description: 'Azure Region'
         required: true
-        default: 'northeurope'
+        default: 'westeurope'
       clusterName:
         description: 'AKS Cluster Name'
         required: true
-        default: 'aks-netbox-ci'
+        default: 'scc-sb-corp-git-netbox-ci-aks'
       kubernetesVersion:
         description: 'Kubernetes Version'
         required: true
@@ -48,12 +48,15 @@ jobs:
 
       - name: Create Resource Group
         run: |
-          # Check if resource group exists
-          if az group exists --name ${{ github.event.inputs.resourceGroupName }}; then
-            echo "Resource group ${{ github.event.inputs.resourceGroupName }} already exists"
+          # Check if resource group exists using explicit comparison
+          RG_EXISTS_RESULT=$(az group exists --name ${{ github.event.inputs.resourceGroupName }})
+          echo "DEBUG: az group exists returned: $RG_EXISTS_RESULT"
+          
+          if [ "$RG_EXISTS_RESULT" = "true" ]; then
+            echo "✅ Resource group ${{ github.event.inputs.resourceGroupName }} already exists"
           else
-            echo "Creating resource group ${{ github.event.inputs.resourceGroupName }} with mandatory tags"
-            az group create \
+            echo "🔨 Creating resource group ${{ github.event.inputs.resourceGroupName }} with mandatory tags"
+            if az group create \
               --name ${{ github.event.inputs.resourceGroupName }} \
               --location ${{ github.event.inputs.location }} \
               --tags \
@@ -66,7 +69,12 @@ jobs:
                 "global.operation.environment"="sandbox" \
                 "global.operation.governance"="GITS‑E" \
                 "global.operation.managed-by"="Jakub.Wdowiarek@securitas.com" \
-                "global.tagging-version"="1.0"
+                "global.tagging-version"="1.0"; then
+              echo "✅ Resource group created successfully!"
+            else
+              echo "❌ Failed to create resource group!"
+              exit 1
+            fi
           fi
 
       - name: Register Azure Resource Providers
@@ -102,22 +110,54 @@ jobs:
         run: |
           echo "🔍 Getting latest available Kubernetes version for ${{ github.event.inputs.location }}..."
           
-          # Get latest stable (non-preview) version using TSV output
-          LATEST_VERSION=$(az aks get-versions --location ${{ github.event.inputs.location }} --query "[?isPreview != \`true\`].kubernetesVersion" --output tsv | sort -V | tail -n 1)
+          # First, let's see what raw data we get
+          echo "📊 RAW AKS VERSIONS DATA:"
+          if AKS_VERSIONS_RAW=$(az aks get-versions --location ${{ github.event.inputs.location }} 2>&1); then
+            echo "$AKS_VERSIONS_RAW"
+          else
+            echo "❌ Error getting AKS versions: $AKS_VERSIONS_RAW"
+          fi
+          
+          echo ""
+          echo "📊 KUBERNETES MAJOR VERSIONS:"
+          az aks get-versions --location ${{ github.event.inputs.location }} --query "values[].version" --output tsv || echo "Failed to get versions"
+          
+          echo ""
+          echo "📊 NON-PREVIEW MAJOR VERSIONS:"
+          az aks get-versions --location ${{ github.event.inputs.location }} --query "values[?isPreview != \`true\`].version" --output tsv || echo "Failed to get non-preview versions"
+          
+          echo ""
+          echo "📊 GETTING LATEST PATCH VERSION:"
+          # Get the latest non-preview major version
+          LATEST_MAJOR=$(az aks get-versions --location ${{ github.event.inputs.location }} --query "values[?isPreview != \`true\`].version" --output tsv | sort -V | tail -n 1)
+          echo "Latest non-preview major version: $LATEST_MAJOR"
+          
+          # Get the latest patch version for that major version
+          if [ -n "$LATEST_MAJOR" ]; then
+            LATEST_VERSION=$(az aks get-versions --location ${{ github.event.inputs.location }} --query "values[?version=='$LATEST_MAJOR'].patchVersions | [0] | keys(@)" --output tsv | sort -V | tail -n 1)
+            echo "Latest patch version: $LATEST_VERSION"
+          else
+            LATEST_VERSION=""
+          fi
           
           # Fallback to known stable version if query fails
           if [ -z "$LATEST_VERSION" ] || [ "$LATEST_VERSION" = "null" ]; then
             LATEST_VERSION="1.32.4"
-            echo "Using fallback K8s version: $LATEST_VERSION"
+            echo "⚠️ Using fallback K8s version: $LATEST_VERSION"
           else
-            echo "Latest K8s version found: $LATEST_VERSION"
+            echo "✅ Latest K8s version found: $LATEST_VERSION"
           fi
           
           echo "K8S_VERSION=$LATEST_VERSION" >> $GITHUB_OUTPUT
           
-          # Show first few available versions for debugging
-          echo "Available versions (first 5):"
-          az aks get-versions --location ${{ github.event.inputs.location }} --query "[0:5].kubernetesVersion" --output tsv || echo "Using input version: ${{ github.event.inputs.kubernetesVersion }}"
+          # Show first few available patch versions for debugging
+          echo ""
+          echo "📊 Available patch versions for $LATEST_MAJOR:"
+          if [ -n "$LATEST_MAJOR" ]; then
+            az aks get-versions --location ${{ github.event.inputs.location }} --query "values[?version=='$LATEST_MAJOR'].patchVersions | [0] | keys(@)" --output tsv | sort -V | head -5 || echo "Error getting patch versions"
+          else
+            echo "No major version found"
+          fi
 
       - name: Create AKS Cluster
         run: |

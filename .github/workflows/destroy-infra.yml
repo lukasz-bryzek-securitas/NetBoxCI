@@ -6,7 +6,7 @@ on:
       resourceGroupName:
         description: 'Name of the Resource Group'
         required: true
-        default: 'NetBoxCI'
+        default: 'SCC-SB-CORP-GIT-NETBOX'
       confirmDestroy:
         description: 'Type "DESTROY" to confirm'
         required: true

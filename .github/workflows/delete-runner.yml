@@ -6,14 +6,18 @@ on:
       resourceGroupName:
         description: 'Name of the Resource Group'
         required: true
-        default: 'rg-github-runners'
+        default: 'SCC-SB-CORP-GIT-NETBOX'
       clusterName:
         description: 'AKS Cluster Name'
         required: true
-        default: 'aks-github-runners'
+        default: 'scc-sb-corp-git-netbox-ci-aks'
       runnerName:
         description: 'Runner Name to Delete'
         required: true
+
+permissions:
+  id-token: write
+  contents: read
 
 jobs:
   delete-runner:
@@ -22,10 +26,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Login to Azure
+      - name: Azure Login (OIDC)
         uses: azure/login@v1
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Get AKS Credentials
         run: |

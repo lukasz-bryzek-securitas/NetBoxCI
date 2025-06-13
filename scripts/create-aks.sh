@@ -30,6 +30,7 @@ az aks create \
     --kubernetes-version $K8S_VERSION \
     --node-count $NODE_COUNT \
     --node-vm-size $NODE_SIZE \
+    --node-resource-group "${RESOURCE_GROUP}-npool" \
     --enable-managed-identity \
     --generate-ssh-keys \
     --network-plugin kubenet \
