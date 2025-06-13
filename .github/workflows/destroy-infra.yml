@@ -6,10 +6,14 @@ on:
       resourceGroupName:
         description: 'Name of the Resource Group'
         required: true
-        default: 'rg-github-runners'
+        default: 'NetBoxCI'
       confirmDestroy:
         description: 'Type "DESTROY" to confirm'
         required: true
+
+permissions:
+  id-token: write
+  contents: read
 
 jobs:
   destroy-infrastructure:
@@ -19,17 +23,82 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Login to Azure
+      - name: Azure Login (OIDC)
         uses: azure/login@v1
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Verify Resource Group Exists
+        id: verify-rg
+        run: |
+          echo "🔍 Checking if resource group ${{ github.event.inputs.resourceGroupName }} exists..."
+          if az group exists --name ${{ github.event.inputs.resourceGroupName }}; then
+            echo "✅ Resource group ${{ github.event.inputs.resourceGroupName }} found"
+            echo "RG_EXISTS=true" >> $GITHUB_OUTPUT
+            
+            # List resources in the group
+            echo "📋 Resources in the group:"
+            az resource list --resource-group ${{ github.event.inputs.resourceGroupName }} --output table
+          else
+            echo "❌ Resource group ${{ github.event.inputs.resourceGroupName }} does not exist"
+            echo "RG_EXISTS=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Delete Resource Group
+        if: steps.verify-rg.outputs.RG_EXISTS == 'true'
         run: |
-          echo "WARNING: Deleting resource group ${{ github.event.inputs.resourceGroupName }} and all resources"
+          echo "🚨 WARNING: Deleting resource group ${{ github.event.inputs.resourceGroupName }} and ALL resources within it!"
+          echo "This action cannot be undone."
+          echo ""
+          echo "📝 Deleting the following resources:"
+          az resource list --resource-group ${{ github.event.inputs.resourceGroupName }} --query "[].{Name:name, Type:type, Location:location}" --output table
+          echo ""
+          
+          echo "🗑️ Initiating resource group deletion..."
           az group delete --name ${{ github.event.inputs.resourceGroupName }} --yes --no-wait
           
-      - name: Verification
+          echo "✅ Resource group deletion initiated successfully"
+
+      - name: Skip Deletion - Resource Group Not Found
+        if: steps.verify-rg.outputs.RG_EXISTS == 'false'
         run: |
-          echo "Resource group deletion initiated. This process runs asynchronously."
-          echo "To check status, run: az group show --name ${{ github.event.inputs.resourceGroupName }}"
+          echo "ℹ️ No action taken - resource group ${{ github.event.inputs.resourceGroupName }} does not exist"
+          echo "This might mean:"
+          echo "  - The resource group was already deleted"
+          echo "  - The resource group name is incorrect"
+          echo "  - You don't have permissions to view this resource group"
+          
+      - name: Verification Instructions
+        run: |
+          echo "📊 VERIFICATION STEPS:"
+          echo ""
+          echo "The resource group deletion runs asynchronously in Azure."
+          echo "To monitor the deletion progress, you can:"
+          echo ""
+          echo "1. Check if the resource group still exists:"
+          echo "   az group exists --name ${{ github.event.inputs.resourceGroupName }}"
+          echo ""
+          echo "2. Try to show the resource group (will fail when deleted):"
+          echo "   az group show --name ${{ github.event.inputs.resourceGroupName }}"
+          echo ""
+          echo "3. List all resource groups to confirm deletion:"
+          echo "   az group list --output table"
+          echo ""
+          echo "⏱️ Typical deletion time: 2-5 minutes for small resource groups"
+          echo "💡 Large resource groups with many resources may take longer"
+
+      - name: Summary
+        run: |
+          echo "🎯 DESTROY INFRASTRUCTURE SUMMARY:"
+          echo "================================="
+          echo "Resource Group: ${{ github.event.inputs.resourceGroupName }}"
+          echo "Confirmation: ${{ github.event.inputs.confirmDestroy }}"
+          echo "Status: ${{ steps.verify-rg.outputs.RG_EXISTS == 'true' && 'Deletion initiated' || 'No action taken (RG not found)' }}"
+          echo "Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo ""
+          if [ "${{ steps.verify-rg.outputs.RG_EXISTS }}" == "true" ]; then
+            echo "⚠️ IMPORTANT: This action cannot be undone!"
+            echo "All resources in the resource group are being permanently deleted."
+          fi
